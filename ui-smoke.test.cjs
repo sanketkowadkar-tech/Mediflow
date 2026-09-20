@@ -1,0 +1,43 @@
+// Script-level UI smoke test with a minimal DOM. Not browser/layout QA.
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const elements=new Map();
+function element(key){if(!elements.has(key))elements.set(key,{value:'',checked:false,open:false,innerHTML:'',textContent:'',dataset:{},classList:{add(){},remove(){},toggle(){}},querySelector:s=>element(key+' '+s),closest:s=>element(key+' '+s),insertAdjacentHTML(){},remove(){},addEventListener(){},showModal(){this.open=true},close(){this.open=false},reset(){},click(){}});return elements.get(key)}
+const document={querySelector:element,querySelectorAll:()=>[],body:element('body'),addEventListener(){},createElement:()=>element('download')};
+element('#consultSlider').parentElement=element('sliderParent');
+const sandbox={console,document,window:{scrollTo(){},addEventListener(){}},location:{hash:''},history:{replaceState(){}},setInterval(){},clearInterval(){},setTimeout(){},Date,Blob,URL,confirm:()=>true};sandbox.globalThis=sandbox;vm.createContext(sandbox);
+const html=fs.readFileSync('dist/index.html','utf8');for(const [,code]of html.matchAll(/<script>([\s\S]*?)<\/script>/g))vm.runInContext(code,sandbox);
+for(const file of ['engine.js','upgrade.js'])vm.runInContext(fs.readFileSync('dist/'+file,'utf8'),sandbox);
+assert(element('#sessionDialog').open);element('#demoRole').value='Administrator';element('#sessionForm').onsubmit({preventDefault(){}});assert(!element('#sessionDialog').open);
+element('#dispatchBtn').onclick();assert.equal(vm.runInContext('sim.patients.filter(p=>p.status==="In treatment").length',sandbox),6);
+for(let i=0;i<15;i++)element('#stepBtn').onclick();element('#compareBtn').onclick();assert(element('#comparisonTable').innerHTML.includes('FIFO'));assert(element('#auditTrail').innerHTML.includes('Allocated'));
+element('#demoRole').value='Observer';element('#sessionForm').onsubmit({preventDefault(){}});const before=vm.runInContext('sim.time',sandbox);element('#stepBtn').onclick();assert.equal(vm.runInContext('sim.time',sandbox),before);assert(element('#auditTrail').innerHTML.includes('Access denied'));
+console.log('PASS: initialization, role entry, dispatch, time progression, comparison rendering, audit rendering and denied observer mutation');
+for(const key of ['#waOpen']){element(key).removeAttribute=function(k){delete this[k]};element(key).setAttribute=function(k,v){this[k]=v}}
+vm.runInContext(fs.readFileSync('dist/registration.js','utf8'),sandbox);
+assert.equal(vm.runInContext("normalizedPhone('+91 98765 43210')",sandbox),'919876543210');
+assert.equal(vm.runInContext("normalizedPhone('9876543210')",sandbox),null);
+element('#demoRole').value='Administrator';element('#sessionForm').onsubmit({preventDefault(){}});
+element('#intakeForm').reportValidity=()=>true;
+for(const [id,value]of Object.entries({intakeName:'<script>demo</script>',intakeAge:'22',intakePhone:'+91 98765 43210',intakeVisit:'First visit',intakeSymptoms:'Fictional symptoms'}))element('#'+id).value=value;
+element('#intakeWhatsAppConsent').checked=true;
+element('#intakeForm').onsubmit({preventDefault(){}});
+assert.equal(vm.runInContext('intakeRecords.size',sandbox),1);assert(element('#intakeList').innerHTML.includes('&lt;script&gt;'));
+assert.equal(vm.runInContext('sim.patients.at(-1).triagePending',sandbox),true);
+element('#dispatchBtn').onclick();assert.equal(vm.runInContext('sim.patients.at(-1).status',sandbox),'Waiting');
+element('#whatsAppBtn').onclick();assert(element('#whatsAppDialog').open);
+assert(!element('#waOpen').href);element('#waConfirm').onchange({target:{checked:true}});assert(element('#waOpen').href.startsWith('https://wa.me/919876543210?text='));assert(!decodeURIComponent(element('#waOpen').href).includes('Fictional symptoms'));
+assert(!element('#auditTrail').innerHTML.includes('919876543210'));assert(!element('#auditTrail').innerHTML.includes('Fictional symptoms'));
+console.log('PASS: registration, phone validation, escaped names, staff reassessment gate, reviewed WhatsApp link and audit data minimization');
+element('#demoRole').value='Patient';element('#sessionForm').onsubmit({preventDefault(){}});
+assert.equal(element('#pageTitle').textContent,'Patient registration');
+assert.equal(element('#dispatchBtn').hidden,true);
+const patientBefore=vm.runInContext('sim.patients.length',sandbox);
+element('#intakeName').value='Patient role demo';element('#intakeForm').onsubmit({preventDefault(){}});
+assert.equal(vm.runInContext('sim.patients.length',sandbox),patientBefore+1);
+assert.equal(vm.runInContext('sim.patients.at(-1).registeredByPatient',sandbox),true);
+assert(element('#intakeList').innerHTML.includes('Your token'));
+assert(!element('#intakeList').innerHTML.includes('&lt;script&gt;'));
+vm.runInContext("switchTab('security')",sandbox);assert.equal(element('#pageTitle').textContent,'Patient registration');
+const patientTime=vm.runInContext('sim.time',sandbox);element('#stepBtn').onclick();assert.equal(vm.runInContext('sim.time',sandbox),patientTime);
+element('#demoRole').value='Administrator';element('#sessionForm').onsubmit({preventDefault(){}});assert.equal(element('#dispatchBtn').hidden,false);
+console.log('PASS: Patient role entry, self-registration, own-demo token display, staff-action denial and staff-role restoration');
